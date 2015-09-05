@@ -3,6 +3,7 @@
 import sys,os,math
 import codecs
 sys.path.append("/Applications/Inkscape.app/Contents/Resources/extensions")
+sys.path.append('../geometry')
 #sys.path.append('/Library/Python/2.7/site-packages')
 import inkex,cubicsuperpath,simplepath,simplestyle
 from PIL import Image
