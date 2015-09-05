@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+  <_name>★Delauney From Path</_name>
+  <id>miffy.sora.polygonalart</id>
+  <dependency type="executable" location="extensions">delauney_from_path.py</dependency>
+  <dependency type="executable" location="extensions">inkex.py</dependency>
+  <dependency type="executable" location="extensions">voronoi.py</dependency>
+  <param name="tab" type="notebook">
+    <page name="options" _gui-text="Options">
+
+    </page>
+    <page name="help" _gui-text="Help">
+      <_param name="help_text" type="description">Polygonal Artを作るためのツールです。パスでワンクリックで作成可能</_param>
+    </page>
+  </param>
+  <effect>
+    <object-type>all</object-type>
+    <effects-menu>
+      <submenu _name="Generate from Path"/>
+    </effects-menu>
+  </effect>
+  <script>
+    <command reldir="extensions" interpreter="python">delauney_from_path.py</command>
+  </script>
+</inkscape-extension>

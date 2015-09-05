@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+  <_name>画像から点を生成</_name>
+  <id>miffy.sora.pointsfromimage</id>
+  <dependency type="executable" location="extensions">points_from_image.py</dependency>
+  <dependency type="executable" location="extensions">inkex.py</dependency>
+  <dependency type="executable" location="extensions">voronoi.py</dependency>
+  <param name="tab" type="notebook">
+    <page name="options" _gui-text="オプション">
+      <param name="threshold" type="int" min="1" max="255" _gui-text="閾値:">10</param>
+      <param name="interval" type="int" min="1" max="100" _gui-text="間隔(%):">10</param>
+    </page>
+    <page name="help" _gui-text="説明">
+      <_param name="help_text" type="description">画像の輪郭部分に点を打つスクリプトです。polygonal art作成の前ステップとして使います</_param>
+    </page>
+  </param>
+  <effect>
+    <object-type>all</object-type>
+    <effects-menu>
+      <submenu _name="Images"/>
+    </effects-menu>
+  </effect>
+  <script>
+    <command reldir="extensions" interpreter="python">points_from_image.py</command>
+  </script>
+</inkscape-extension>
