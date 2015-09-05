@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+  <_name>三角形分割</_name>
+  <id>miffy.sora.triangulate</id>
+  <dependency type="executable" location="extensions">Triangulate.py</dependency>
+  <effect>
+    <object-type>all</object-type>
+    <effects-menu>
+       <submenu _name="三角形分割"/>
+    </effects-menu>
+  </effect>
+  <script>
+    <command reldir="extensions" interpreter="python">Triangulate.py</command>
+  </script>
+</inkscape-extension>
