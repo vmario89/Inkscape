@@ -1,330 +1,398 @@
-#!/usr/bin/env python
-# coding: UTF-8
-# standard library
-import sys
-import os
-# local library
+#!/usr/bin/env python3
+
 import inkex
-import simplestyle
-import simplepath
-import simpletransform
-import voronoi
-import cubicsuperpath
+import base64
+from io import StringIO, BytesIO
 from PIL import Image
-inkex.localize()
+from lxml import etree
+import math
 
+def distancia_puntos(pto1,pto2):
+    return math.sqrt((pto1[0]-pto2[0])**2+(pto1[1]-pto2[1])**2)
 
-class Point:
-	def __init__(self, x, y):
-		self.x = x
-		self.y = y
-	def __lt__(self,other):
-		return (self.x*self.y<other.x*other.y)
-	def __le__(self,other):
-		return (self.x*self.y<=other.y*other.y)
-	def __gt__(self,other):
-		return (self.x*self.y>other.x*other.y)
-	def __ge__(self,other):
-		return (self.x*self.y>=other.x*other.y)
-	def __eq__(self,other):
-		return (self.x==other.x) and (self.y==other.y)
-	def __ne__(self,other):
-		return (self.x!=other.x) or (self.y!=other.y)
+def linear_func(pto1,pto2):
+    diff_x=pto2[0]-pto1[0]
+    diff_y=pto2[1]-pto1[1]
+    if diff_x==0:
+        return {'a':float('inf'),'b':'-'+str(pto1[0])+'*inf'}
+    try:
+        a=float(diff_y)/diff_x
+    except ZeroDivisionError:
+          a=float('inf')
+    b=pto1[1]-a*pto1[0]
+    return {'a':a,'b':b}
 
-	def __str__(self):
-		return "("+str(self.x)+","+str(self.y)+")"
+def x_intersect(lf1,lf2):
+    inf=-1
+    if lf1['a']==float('inf'):
+        return eval(lf1['b'])
+    if lf2['a']==float('inf'):
+        return eval(lf2['b'])
+    inf=1
+    if lf1['a']==-float('inf'):
+        return eval(lf1['b'])
+    if lf2['a']==-float('inf'):
+        return eval(lf2['b'])
+    if lf1['a'] == lf2['a']:
+        return float('nan')
+    return (lf2['b']-lf1['b'])/(lf1['a']-lf2['a'])
 
+def lr_side(coords,seg):
+    #vertical
+    if seg[0][0]==seg[1][0]:
+        #hacia arriba
+        if seg[0][1]>seg[1][1]:
+            if coords[0]>seg[0][0]:
+                return 'r'
+            else:
+                return 'l'
+        else:
+            if coords[0]>seg[0][0]:
+                return 'l'
+            else:
+                return 'r'
+    if seg[0][1]==seg[1][1]:
+        #horizontal
+        if seg[0][0]<seg[1][0]:
+            #hacia derecha
+            if coords[1]>seg[0][1]:
+                return 'r'
+            else:
+                return 'l'
+        else:
+            if coords[1]>seg[0][1]:
+                return 'l'
+            else:
+                return 'r'
 
-class Voronoi2svg(inkex.Effect):
-	def __init__(self):
-		inkex.Effect.__init__(self)
+    lf=linear_func(seg[0],seg[1])
+    y=lf['a']*coords[0]+lf['b']
+    if seg[0][0]<seg[1][0] and seg[0][1]<seg[1][1]:
+        #main diag
+        #print('md')
+        if y>coords[1]:
+            return 'l'
+        if y<coords[1]:
+            return 'r'
 
-		# {{{ Additional options
+    if seg[0][0]>seg[1][0] and seg[0][1]>seg[1][1]:
+        #print('md2')
+        if y<coords[1]:
+            return 'l'
+        if y>coords[1]:
+            return 'r'
+    if seg[0][1]<seg[1][1] and seg[1][0]<seg[0][0]:
+        #print('sd')
+        if y<coords[1]:
+            return 'l'
+        if y>coords[1]:
+            return 'r'
+    if seg[0][1]>seg[1][1] and seg[1][0]>seg[0][0]:
+        #print('sd2')
+        if y<coords[1]:
+            return 'r'
+        if y>coords[1]:
+            return 'l'
 
-		self.OptionParser.add_option(
-			"--tab",
-			action="store",
-			type="string",
-			dest="tab")
+def box(poly):
+    x_min=float('inf')
+    y_min=float('inf')
+    x_max=0
+    y_max=0
+    for seg in poly:
+        p1=seg[0]
+        p2=seg[1]
+        if p1[0]<x_min:
+            x_min=p1[0]
+        if p2[0]<x_min:
+            x_min=p2[0]
+        if p1[1]<y_min:
+            y_min=p1[1]
+        if p2[1]<y_min:
+            y_min=p2[1]
+        if p1[0]>x_max:
+            x_max=p1[0]
+        if p2[0]>x_max:
+            x_max=p2[0]
+        if p1[1]>y_max:
+            y_max=p1[1]
+        if p2[1]>y_max:
+            y_max=p2[1]
+    return ((x_min,y_min),(x_max,y_max))
 
-		#}}}
+def center_coords(poly):
+    cs=[((seg[0][0]+seg[1][0])/2,(seg[0][1]+seg[1][1])/2) for seg in poly]
+    x=0
+    y=0
+    for c in cs:
+        x=x+c[0]
+        y=y+c[1]
+    return (x/len(poly),y/len(poly))
 
-	# {{{ Clipping a line by a bounding box
-	def dot(self, x, y):
-		return x[0] * y[0] + x[1] * y[1]
+def is_inside_polygon(coords,poly):
+    box_=box(poly)
+    c=center_coords(poly)
+    x=coords[0]
+    y=coords[1]
+    if x<box_[0][0]:
+        return False
+    if x>box_[1][0]:
+        return False
+    if y<box_[0][1]:
+        return False
+    if y>box_[1][1]:
+        return False
 
-	def intersectLineSegment(self, line, v1, v2):
-		s1 = self.dot(line, v1) - line[2]
-		s2 = self.dot(line, v2) - line[2]
-		if s1 * s2 > 0:
-			return (0, 0, False)
-		else:
-			tmp = self.dot(line, v1) - self.dot(line, v2)
-			if tmp == 0:
-				return (0, 0, False)
-			u = (line[2] - self.dot(line, v2)) / tmp
-			v = 1 - u
-			return (u * v1[0] + v * v2[0], u * v1[1] + v * v2[1], True)
+    for seg in poly:
+        
+        lr=lr_side(c,seg)
+        #print('lr: '+str(lr))
+        if lr_side(coords,seg)!=lr:
+            return False
+    return True
 
-	def clipEdge(self, vertices, lines, edge, bbox):
-		#bounding box corners
-		bbc = []
-		bbc.append((bbox[0], bbox[2]))
-		bbc.append((bbox[1], bbox[2]))
-		bbc.append((bbox[1], bbox[3]))
-		bbc.append((bbox[0], bbox[3]))
+def slope(radians):
+    if radians==math.pi/2:
+        return float('inf')
+    if radians==-math.pi/2:
+        return -float('inf')
+    c=math.cos(radians)
+    s=math.sin(radians)
+    return s/c
 
-		#record intersections of the line with bounding box edges
-		line = (lines[edge[0]])
-		interpoints = []
-		for i in range(4):
-			p = self.intersectLineSegment(line, bbc[i], bbc[(i + 1) % 4])
-			if (p[2]):
-				interpoints.append(p)
+def angle_of_slope(slope):
+    if slope==float('inf'):
+        return math.pi/2
+    if slope==-float('inf'):
+        return -math.pi/2
+    d=math.sqrt(slope**2+1)
+    dy=slope/d
+    return math.asin(dy)
 
-		#if the edge has no intersection, return empty intersection
-		if (len(interpoints) < 2):
-			return []
+def perpend_angle(radians):
+    if radians>=0 and radians<=math.pi/2:
+        return -math.pi/2+radians
+    if radians<=0 and radians>=-math.pi/2:
+        return math.pi/2+radians
 
-		if (len(interpoints) > 2):  #happens when the edge crosses the corner of the box
-			interpoints = list(set(interpoints))  #remove doubles
+def perpendicular_linear_function(coords0,coords1):
+    lf=linear_func(coords0,coords1)
+    slope_=lf['a']
+    angle=angle_of_slope(slope_)
+    perpend_ang=perpend_angle(angle)
+    perpend_slope=slope(perpend_ang)
+    mid_y=(coords0[1]+coords1[1])/2
+    mid_x=(coords0[0]+coords1[0])/2
+    b=mid_y-perpend_slope*mid_x
+    if perpend_slope==-float('inf'):
+        perpend_slope=float('inf')
+    if perpend_slope==float('inf'):
+        b=str(-mid_x)+'*inf'
 
-		#points of the edge
-		v1 = vertices[edge[1]]
-		interpoints.append((v1[0], v1[1], False))
-		v2 = vertices[edge[2]]
-		interpoints.append((v2[0], v2[1], False))
+    return {'a':perpend_slope,'b':b}
 
-		#sorting the points in the widest range to get them in order on the line
-		minx = interpoints[0][0]
-		maxx = interpoints[0][0]
-		miny = interpoints[0][1]
-		maxy = interpoints[0][1]
-		for point in interpoints:
-			minx = min(point[0], minx)
-			maxx = max(point[0], maxx)
-			miny = min(point[1], miny)
-			maxy = max(point[1], maxy)
+def circumcircle(pointy_triangle):
+    plf1=perpendicular_linear_function(pointy_triangle[0],pointy_triangle[1])
+    plf2=perpendicular_linear_function(pointy_triangle[1],pointy_triangle[2])
+    x=x_intersect(plf1,plf2)
+    if plf1['a']==float('inf') or plf1['a']==-float('inf'):
+        y=plf2['a']*x+plf2['b']
+    else:
+        y=plf1['a']*x+plf1['b']
+    c=(x,y)
+    r=distancia_puntos(c,pointy_triangle[0])
+    return (c,r)
 
-		if (maxx - minx) > (maxy - miny):
-			interpoints.sort()
-		else:
-			interpoints.sort(key=lambda pt: pt[1])
+def get_XxX_coords_inside_box(x_amount,box_):
+    w=box_[1][0]-box_[0][0]
+    h=box_[1][1]-box_[0][1]
+    dx=w/(x_amount+1)
+    dy=h/(x_amount+1)
+    l=[]
+    for i in range(1,x_amount+1):
+        for j in range(1,x_amount+1):
+            c=(box_[0][0]+dx*i,box_[0][1]+dy*j)
+            l.append(c)
+    return l
 
-		start = []
-		inside = False  #true when the part of the line studied is in the clip box
-		startWrite = False  #true when the part of the line is in the edge segment
-		for point in interpoints:
-			if point[2]:  #The point is a bounding box intersection
-				if inside:
-					if startWrite:
-						return [[start[0], start[1]], [point[0], point[1]]]
-					else:
-						return []
-				else:
-					if startWrite:
-						start = point
-				inside = not inside
-			else:  #The point is a segment endpoint
-				if startWrite:
-					if inside:
-						#a vertex ends the line inside the bounding box
-						return [[start[0], start[1]], [point[0], point[1]]]
-					else:
-						return []
-				else:
-					if inside:
-						start = point
-				startWrite = not startWrite
+def get_XxX_coords_inside_poly(x_amount,poly):
+    box_=box(poly)
+    cs=get_XxX_coords_inside_box(x_amount,box_)
+    csip=[]
+    for c in cs:
+        if is_inside_polygon(c,poly):
+            csip.append(c)
+    return csip
 
-	#}}}
+def extrinsic_to_intrinsic_coords(coords,intrinsic_width,intrinsic_height,extrinsic_width,extrinsic_height,anchor):
+    rw=intrinsic_width/extrinsic_width
+    rh=intrinsic_height/extrinsic_height
+    return ((coords[0]-anchor[0])*rw,(coords[1]-anchor[1])*rh)
 
-	#{{{ Transformation helpers
+def super_triangle(coords_list):
+    floor_c=coords_list[0]
+    right_roof_c=coords_list[0]
+    left_roof_c=coords_list[0]
+    for c in coords_list:
+        if c[1]>floor_c[1]:
+            floor_c=c
+        if c[1]-c[0]<-right_roof_c[0]+right_roof_c[1]:
+            right_roof_c=c
+        if c[0]+c[1]<left_roof_c[0]+left_roof_c[1]:
+            left_roof_c=c
 
-	def invertTransform(self, mat):
-		det = mat[0][0] * mat[1][1] - mat[0][1] * mat[1][0]
-		if det != 0:  #det is 0 only in case of 0 scaling
-			#invert the rotation/scaling part
-			a11 = mat[1][1] / det
-			a12 = -mat[0][1] / det
-			a21 = -mat[1][0] / det
-			a22 = mat[0][0] / det
+    b=right_roof_c[1]-right_roof_c[0]
+    lf1={'a':1,'b':b}
+    b=left_roof_c[1]+left_roof_c[0]
+    lf2={'a':-1,'b':b}
+    x_inter=x_intersect(lf1,lf2)
+    margin=30
+    c0=(x_inter,(lf1['a']*x_inter+lf1['b'])-margin)
+    c1=((+b-floor_c[1])-margin,floor_c[1]+margin)
+    b=right_roof_c[1]-right_roof_c[0]
+    c2=((-b+floor_c[1])+margin,floor_c[1]+margin)
+    return ((c0,c1),(c1,c2),(c2,c0))
 
-			#invert the translational part
-			a13 = -(a11 * mat[0][2] + a12 * mat[1][2])
-			a23 = -(a21 * mat[0][2] + a22 * mat[1][2])
+def is_edge_in_pointy_triangle(edge,pointy_triangle):
+    if edge[0] in pointy_triangle and edge[1] in pointy_triangle:
+        return True
 
-			return [[a11, a12, a13], [a21, a22, a23]]
-		else:
-			return [[0, 0, -mat[0][2]], [0, 0, -mat[1][2]]]
+def is_edge_shared_in_list_of_pointy_triangle(edge,list):
+    i=0
+    for pointy_triangle in list:
+        if is_edge_in_pointy_triangle(edge,pointy_triangle):
+            i=i+1
+    if i>1:
+        return True
+    return False 
 
-	def getGlobalTransform(self, node):
-		parent = node.getparent()
-		myTrans = simpletransform.parseTransform(node.get('transform'))
-		if myTrans:
-			if parent is not None:
-				parentTrans = self.getGlobalTransform(parent)
-				if parentTrans:
-					return simpletransform.composeTransform(parentTrans, myTrans)
-				else:
-					return myTrans
-		else:
-			if parent is not None:
-				return self.getGlobalTransform(parent)
-			else:
-				return None
+def bowyer_watson(coords_list):
+    if coords_list==[]:
+        return []
+    triangulation=[]
+    super_triangle_=super_triangle(coords_list)
+    
+    super_triangle_=(super_triangle_[0][0],super_triangle_[1][0],super_triangle_[2][0])
+    triangulation.append(super_triangle_)
 
+    
+    for c in coords_list:
+        bad_triangles=[]
+        for pointy_triangle in triangulation:
+            circum=circumcircle(pointy_triangle)
+            center=circum[0]
+            r=circum[1]
+            if distancia_puntos(c,center)<r:
+                bad_triangles.append(pointy_triangle)
+        poly=[]
+        for pointy_triangle in bad_triangles:
+            for edge in ((pointy_triangle[0],pointy_triangle[1]),(pointy_triangle[1],pointy_triangle[2]),(pointy_triangle[2],pointy_triangle[0])):
+                if not is_edge_shared_in_list_of_pointy_triangle(edge,bad_triangles):
+                    poly.append(edge)
+        for pointy_triangle in bad_triangles:
+            triangulation.remove(pointy_triangle)
+        for edge in poly:
+            new_pointy_triangle=(edge[0],c,edge[1])
+            triangulation.append(new_pointy_triangle)
+            
+    real_triangulation=[]
+    for triangle in triangulation:
+        share_super=False
+        for point in triangle:
+            if point in super_triangle_:
+                share_super=True
+        if not share_super:
+            real_triangulation.append(triangle)
 
-	#}}}
+    return real_triangulation
+	
+def sided_triangle_to_triangle_path_data(sided_triangle):
+    cs=[]
+    for side in sided_triangle:
+        if not side[0] in cs:
+            cs.append(side[0])
+        if not side[1] in cs:
+            cs.append(side[1])
+    c0=cs[0]
+    t1=(cs[1][0]-c0[0],cs[1][1]-c0[1])
+    t2=(cs[2][0]-cs[1][0],cs[2][1]-cs[1][1])
+    return 'm '+str(c0)[1:len(str(c0))-1]+' '+str(t1)[1:len(str(t1))-1]+' '+str(t2)[1:len(str(t2))-1]+' z'
 
-	def effect(self):
+class LowPoly(inkex.Effect):
+    def __init__(self):
+        inkex.Effect.__init__(self)
 
-		#{{{ Check that elements have been selected
+    def get_list_of_crgb_inside_triangle(self,rgb_image,triangle,extrinsic_width,extrinsic_height,anchor):
+        cs=    get_XxX_coords_inside_poly(5,triangle)
+        crgbs=[]
+        w,h=rgb_image.size
+        for c in cs:
+            c2=    extrinsic_to_intrinsic_coords(c,w,h,extrinsic_width,extrinsic_height,anchor)
+            crgbs.append((c,rgb_image.getpixel(c2)))
+        return crgbs
 
-		if len(self.options.ids) == 0:
-			inkex.errormsg(_("Please select objects!"))
-			return
+    def average_rgb_from_crgbs(self,crgbs):
+        rgb=(0,0,0)
+        for crgb in crgbs:
+            rgb=(rgb[0]+crgb[1][0],rgb[1]+crgb[1][1],rgb[2]+crgb[1][2])
+        len_=len(crgbs)
+        if len_==0:
+            return (255,0,0)
+        return (rgb[0]/len_,rgb[1]/len_,rgb[2]/len_)
 
-		#}}}
+    def average_rgb_in_triangle(self,rgb_image,triangle,extrinsic_width,extrinsic_height,anchor):
+        crgbs=self.get_list_of_crgb_inside_triangle(rgb_image,triangle,extrinsic_width,extrinsic_height,anchor)
+        return self.average_rgb_from_crgbs(crgbs)
 
-		#{{{ Drawing styles
+    def get_list_of_coords_from_selected_circles(self):
+        #first_node=self.selected[self.options.ids[0]]
+        lista=[]
+        for id_ in self.options.ids:
+            element=self.svg.selected[id_]
+            if element.tag=='{http://www.w3.org/2000/svg}circle' or element.tag=='{http://www.w3.org/2000/svg}ellipse':
+                x=float(element.get('cx'))
+                y=float(element.get('cy'))
+                lista.append((x,y))
+        return lista
 
-		linestyle = {
-			'stroke': '#000000',
-			'stroke-width': str(self.unittouu('1px')),
-			'fill': 'none'
-		}
+    def make_triangle(self,pointy_triangle,rgb,svg):
+        rgb_hex="#%02x%02x%02x" % (int(rgb[0]),int(rgb[1]),int(rgb[2]))
 
-		facestyle = {
-			'stroke': '#000000',
-			'stroke-width':'0px',# str(self.unittouu('1px')),
-			'fill': 'none'
-		}
+        sided_triangle=((pointy_triangle[0],pointy_triangle[1]),(pointy_triangle[1],pointy_triangle[2]),(pointy_triangle[2],pointy_triangle[0]))
+        path_data=sided_triangle_to_triangle_path_data(sided_triangle)
+        path_element = etree.SubElement(svg, 'path')
+        path_element.set('d',path_data)
+        style = {'opacity':1,'fill':rgb_hex,'fill-opacity':1,'fill-rule':'evenodd','stroke':'#64667a','stroke-width':0,'stroke-linecap':'round','stroke-linejoin':'miter','stroke-miterlimit':4,'stroke-dasharray':'none','stroke-opacity':1}
+        path_element.set('style', str(inkex.Style(style)))
 
-		#}}}
+    def effect(self):
+        svg = self.document.getroot()
+        coords_list=self.get_list_of_coords_from_selected_circles()
+        image_element=svg.find('.//{http://www.w3.org/2000/svg}image')
+        image_string=image_element.get('{http://www.w3.org/1999/xlink}href')
+        #find comma position
+        i=0
+        while i<40:
+            if image_string[i]==',':
+                break
+            i=i+1
+        image = Image.open(BytesIO(base64.b64decode(image_string[i+1:len(image_string)])))
+        rgb_image=image.convert('RGB')
 
-		#{{{ Handle the transformation of the current group
-		parentGroup = self.getParentNode(self.selected[self.options.ids[0]])
+        extrinsic_image_width=float(image_element.get('width'))
+        extrinsic_image_height=float(image_element.get('height'))
+        anchor_x=float(image_element.get('x'))
+        anchor_y=float(image_element.get('y'))
+        rgb_image=image.convert('RGB')
+        anchor=(anchor_x,anchor_y)
+        triangulation= bowyer_watson(coords_list)
 
-		svg = self.document.getroot()
-		children =svg.getchildren()
-		fp=open("log.txt","w")
-		img=None
-		width_in_svg=1
-		height_in_svg=1
-		for child in children:
-			if child.tag=="{http://www.w3.org/2000/svg}g":
-				ccc=child.getchildren()
-				for c in ccc:
-					if c.tag=="{http://www.w3.org/2000/svg}image":
-						href=c.attrib["{http://www.w3.org/1999/xlink}href"]
-						fp.write(href)
-						img = Image.open(href)
-						width_in_svg=child.attrib['width']
-						height_in_svg=child.attrib['height']
-			elif child.tag=="{http://www.w3.org/2000/svg}image":
-				href=child.attrib["{http://www.w3.org/1999/xlink}href"]
-				width_in_svg=child.attrib['width']
-				height_in_svg=child.attrib['height']
-				if "file://" in href:
-					href=href[7:]
-				fp.write(href+"\n")
-				img = Image.open(href).convert("RGB")
-		width=-1
-		height=-1
-		if img!=None:
-			imagesize = img.size
-			width=img.size[0]
-			height=img.size[1]
-		fp.write("imageSize="+str(imagesize))
+        for pointy_triangle in triangulation:
+            sided_triangle=((pointy_triangle[0],pointy_triangle[1]),(pointy_triangle[1],pointy_triangle[2]),(pointy_triangle[2],pointy_triangle[0]))
+            try:
+                rgb=self.average_rgb_in_triangle(rgb_image,sided_triangle,extrinsic_image_width,extrinsic_image_height,anchor)
+                self.make_triangle(pointy_triangle,rgb,svg)
+            except IndexError:
+                pass
 
-
-
-		trans = self.getGlobalTransform(parentGroup)
-		invtrans = None
-		if trans:
-			invtrans = self.invertTransform(trans)
-
-		#}}}
-
-		#{{{ Recovery of the selected objects
-
-		pts = []
-		nodes = []
-		seeds = []
-
-		fp.write('num:'+str(len(self.options.ids))+'\n')
-		for id in self.options.ids:
-			node = self.selected[id]
-			nodes.append(node)
-			if(node.tag=="{http://www.w3.org/2000/svg}path"):#pathだった場合
-				#パスの頂点座標を取得
-				points = cubicsuperpath.parsePath(node.get('d'))
-				fp.write(str(points)+"\n")
-				for p in points[0]:
-					pt=[p[1][0],p[1][1]]
-					if trans:
-						simpletransform.applyTransformToPoint(trans, pt)
-					pts.append(Point(pt[0], pt[1]))
-					seeds.append(Point(p[1][0], p[1][1]))
-			else:#その他の図形の場合
-				bbox = simpletransform.computeBBox([node])
-				if bbox:
-					cx = 0.5 * (bbox[0] + bbox[1])
-					cy = 0.5 * (bbox[2] + bbox[3])
-					pt = [cx, cy]
-					if trans:
-						simpletransform.applyTransformToPoint(trans, pt)
-					pts.append(Point(pt[0], pt[1]))
-					seeds.append(Point(cx, cy))
-		pts.sort()
-		seeds.sort()
-		fp.write("*******sorted!***********"+str(len(seeds))+"\n")
-
-		#}}}
-
-		#{{{ Creation of groups to store the result
-		# Delaunay
-		groupDelaunay = inkex.etree.SubElement(parentGroup, inkex.addNS('g', 'svg'))
-		groupDelaunay.set(inkex.addNS('label', 'inkscape'), 'Delaunay')
-
-		#}}}
-
-		scale_x=float(width_in_svg)/float(width)
-		scale_y=float(height_in_svg)/float(height)
-		fp.write('width='+str(width)+', height='+str(height)+'\n')
-		fp.write('scale_x='+str(scale_x)+', scale_y='+str(scale_y)+'\n')
-
-		#{{{ Voronoi diagram generation
-
-		triangles = voronoi.computeDelaunayTriangulation(seeds)
-		for triangle in triangles:
-			p1 = seeds[triangle[0]]
-			p2 = seeds[triangle[1]]
-			p3 = seeds[triangle[2]]
-			cmds = [['M', [p1.x, p1.y]],
-					['L', [p2.x, p2.y]],
-					['L', [p3.x, p3.y]],
-					['Z', []]]
-			path = inkex.etree.Element(inkex.addNS('path', 'svg'))
-			path.set('d', simplepath.formatPath(cmds))
-			middleX=(p1.x+p2.x+p3.x)/3.0/scale_x
-			middleY=(p1.y+p2.y+p3.y)/3.0/scale_y
-			fp.write("x:"+str(middleX)+" y:"+str(middleY)+"\n")
-			if img!=None and imagesize[0]>middleX and imagesize[1]>middleY and middleX>=0 and middleY>=0:
-				r,g,b = img.getpixel((middleX,middleY))
-				facestyle["fill"]=simplestyle.formatColor3i(r,g,b)
-			else:
-				facestyle["fill"]="black"
-			path.set('style', simplestyle.formatStyle(facestyle))
-			groupDelaunay.append(path)
-		fp.close()
-				#}}}
-
-
-if __name__ == "__main__":
-	e = Voronoi2svg()
-	e.affect()
-
-
-# vim: expandtab shiftwidth=2 tabstop=2 softtabstop=2 fileencoding=utf-8 textwidth=99
+LowPoly().run()
