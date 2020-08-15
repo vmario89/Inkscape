@@ -1,60 +1,66 @@
-#!/usr/bin/env python
-#coding: UTF-8
+#!/usr/bin/env python3
+
 class Triangle():
-	#Segmentを渡す
+	#given segment
 	def __init__(self,_a,_b,_c):
 		self.a=_a
 		self.b=_b
 		self.c=_c
+        
 	def __repr__(self):
 		return "Triangle:("+str(self.a)+","+str(self.b)+","+str(self.c)+")"
-	#aを中心とした重心座標です
-	# @return u b方向へどのくらい
-	# @return v c方向へどのくらい
+        # Center of gravity centered on #a
+        # @return u how much to b
+        # @return v how much in the c direction
+    
 	def barycentric(self,p):
-		#重心座標を使う方法
+		#How to use barycentric coordinates
 		#http://www.blackpawn.com/texts/pointinpoly/default.html
 		ca = self.c-self.a
 		ba = self.b-self.a
 		pa = p-self.a
 
-		#内積を計算
+		#Calculate dot product
 		dotca = ca.dot(ca)
 		dotcba = ca.dot(ba)
 		dotcpa = ca.dot(pa)
 		dotba = ba.dot(ba)
 		dotbpa = ba.dot(pa)
 
-		#重心座標の計算
+		#Calculation of barycentric coordinates
 		invDenom = 1 / (dotca * dotba - dotcba * dotcba);
 
 		u = (dotba * dotcpa-dotcba*dotbpa)*invDenom
 		v = (dotca * dotbpa - dotcba * dotcpa) * invDenom
 		return u,v
-	#三角形の内側に点があるかどうか
+        
+	# Whether there is a point inside the triangle
 	def isContain(self,p):
 		u,v=self.barycentric(p)
 		inkex.errormsg("\n u="+str(u)+" v="+str(v))
-		#u=v=0ならば三角形のある点と同じ点
-		#三角形の中に点があるかどうかチェック
+		If #u=v=0, the same point as the triangle point
+		#Check if there is a point in the triangle
 		return (u > 0) and (v > 0) and (u + v < 1)
+        
 	def toSVG(self):
 		return str(self.a.x)+","+str(self.a.y)+","+str(self.b.x)+","+str(self.b.y)+","+str(self.c.x)+","+str(self.c.y)
-	#頂点a,b,cの並びは時計回りかどうか
+	# Is the arrangement of vertices a, b, c clockwise?
+    
 	def isClockWise(self):
 		circle=self.circumcircle()
 		center=circle.center
 		aTob=self.b-self.a
 		aToc=self.c-self.a
-		#外積を求めて向きを求めよう
+		#Let's find the cross product
 		cross=aTob.cross(aToc)
 
 		inkex.errormsg(" cross"+str(cross))
 		if(cross>0):
 			return True
-		return False#反時計回り
+		return False#Counterclockwise
+        
 	def circumcircle(self):
-		#各辺の長さを求める
+		#Find the length of each side
 		ab=(self.a-self.b).length()
 		bc=(self.b-self.c).length()
 		ca=(self.c-self.a).length()
