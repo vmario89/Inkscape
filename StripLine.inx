@@ -1,17 +1,17 @@
+</inkscape-extension>
 <?xml version="1.0" encoding="UTF-8"?>
 <inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
-  <_name>ストリップライン</_name>
+  <_name>Strip Line</_name>
   <id>miffy.sora.stripline</id>
-  <dependency type="executable" location="extensions">./StripLine/StripLine.py</dependency>
-  <param name="linewidth" type="string" _gui-text="Line Width">10</param>
-  <param name="logfilename" type="string" _gui-text="ログファイルの名前">log.txt</param>
-  <effect>
-    <object-type>all</object-type>
+   <param name="linewidth" type="int" min="0" max="9999" gui-text="Line Width">10</param>
+   <param name="logfilename" type="string" gui-text="Log file name">log.txt</param>
+   <effect>
+      <object-type>all</object-type>
     <effects-menu>
        <submenu _name="Generate from Path"/>
     </effects-menu>
-  </effect>
-  <script>
-    <command reldir="extensions" interpreter="python">./StripLine/StripLine.py</command>
-  </script>
+   </effect>
+   <script>
+      <command location="inx" interpreter="python">StripLine.py</command>
+   </script>
 </inkscape-extension>
