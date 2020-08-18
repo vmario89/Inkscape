@@ -213,6 +213,9 @@ class Voronoi2svg(inkex.Effect):
 
         svg = self.document.getroot()
         image_element = svg.find('.//{http://www.w3.org/2000/svg}image')
+        if image_element is None:
+            inkex.utils.debug("No image found")
+            exit(1)
         self.path = self.checkImagePath(image_element)  # This also ensures the file exists
         if self.path is None:  # check if image is embedded or linked
             image_string = image_element.get('{http://www.w3.org/1999/xlink}href')
