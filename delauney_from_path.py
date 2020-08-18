@@ -8,9 +8,8 @@ from inkex.paths import CubicSuperPath, Path
 from PIL import Image
 from lxml import etree
 import base64
-from io import StringIO, BytesIO
-
-inkex.localization.localize
+from io import BytesIO
+import urllib.request as urllib
 
 # A tool for making polygonal art. Can be created with one click with a pass.
 
@@ -157,7 +156,7 @@ class Voronoi2svg(inkex.Effect):
             if parent is not None:
                 parentTrans = self.getGlobalTransform(parent)
                 if parentTrans:
-                    return simpletransform.composeTransform(parentTrans, myTrans)
+                    return Transform(parentTrans) * Transform(myTrans)
                 else:
                     return myTrans
         else:
@@ -165,22 +164,35 @@ class Voronoi2svg(inkex.Effect):
                 return self.getGlobalTransform(parent)
             else:
                 return None
-                
-    def getImage(self, node):
-        image_element=self.svg.find('.//{http://www.w3.org/2000/svg}image')
-        image_string=image_element.get('{http://www.w3.org/1999/xlink}href')
-        #find comma position
-        i=0
-        while i<40:
-            if image_string[i]==',':
-                break
-            i=i+1
-        return Image.open(BytesIO(base64.b64decode(image_string[i+1:len(image_string)])))
-                
+
+    def checkImagePath(self, node):
+        """Embed the data of the selected Image Tag element"""
+        xlink = node.get('xlink:href')
+        if xlink and xlink[:5] == 'data:':
+            # No need, data alread embedded
+            return
+
+        url = urllib.urlparse(xlink)
+        href = urllib.url2pathname(url.path)
+
+        # Primary location always the filename itself.
+        path = self.absolute_href(href or '')
+
+        # Backup directory where we can find the image
+        if not os.path.isfile(path):
+            path = node.get('sodipodi:absref', path)
+
+        if not os.path.isfile(path):
+            inkex.errormsg('File not found "{}". Unable to embed image.').format(path)
+            return
+
+        if (os.path.isfile(path)):
+            return path
+
     def effect(self):
         # Check that elements have been selected
         if len(self.options.ids) == 0:
-            inkex.errormsg(_("Please select objects!"))
+            inkex.errormsg("Please select objects!")
             return
 
         # Drawing styles
@@ -200,29 +212,26 @@ class Voronoi2svg(inkex.Effect):
         parentGroup = (self.svg.selected[self.options.ids[0]]).getparent()
 
         svg = self.document.getroot()
-        children =svg.getchildren()
-              
-        img=None
-        width_in_svg=1
-        height_in_svg=1
-        for child in children:
-                if child.tag=="{http://www.w3.org/2000/svg}g":
-                    ccc=child.getchildren()
-                    for c in ccc:
-                        if c.tag=="{http://www.w3.org/2000/svg}image":
-                            img=self.getImage(child)
-                            width_in_svg=c.get('width')
-                            height_in_svg=c.get('height')
-                elif child.tag=="{http://www.w3.org/2000/svg}image":
-                    width_in_svg=c.get('width')
-                    height_in_svg=c.get('height')
-                    img=self.getImage(child) 
-                    img = img.convert("RGB")
+        image_element = svg.find('.//{http://www.w3.org/2000/svg}image')
+        self.path = self.checkImagePath(image_element)  # This also ensures the file exists
+        if self.path is None:  # check if image is embedded or linked
+            image_string = image_element.get('{http://www.w3.org/1999/xlink}href')
+            # find comma position
+            i = 0
+            while i < 40:
+                if image_string[i] == ',':
+                    break
+                i = i + 1
+            img = Image.open(BytesIO(base64.b64decode(image_string[i + 1:len(image_string)])))
+        else:
+            img = Image.open(self.path)
+
+        extrinsic_image_width=float(image_element.get('width'))
+        extrinsic_image_height=float(image_element.get('height'))
                
         width=-1
         height=-1
-        if img!=None:
-            (width, height) = img.size
+        (width, height) = img.size
             
         trans = self.getGlobalTransform(parentGroup)
         invtrans = None
@@ -264,8 +273,8 @@ class Voronoi2svg(inkex.Effect):
         groupDelaunay = etree.SubElement(parentGroup, inkex.addNS('g', 'svg'))
         groupDelaunay.set(inkex.addNS('label', 'inkscape'), 'Delaunay')
 
-        scale_x=float(width_in_svg)/float(width)
-        scale_y=float(height_in_svg)/float(height)
+        scale_x=float(extrinsic_image_width)/float(width)
+        scale_y=float(extrinsic_image_height)/float(height)
         # Voronoi diagram generation
 
         triangles = voronoi.computeDelaunayTriangulation(seeds)
@@ -282,7 +291,7 @@ class Voronoi2svg(inkex.Effect):
             middleX=(p1.x+p2.x+p3.x)/3.0/scale_x
             middleY=(p1.y+p2.y+p3.y)/3.0/scale_y
             #inkex.utils.debug("middleX = " + str(middleX) + ", middleY = " + str(middleY) + ", imagesize[0] = " + str(width) + ",imagesize[1] = " + str(height))
-            if img!=None and width>middleX and height>middleY and middleX>=0 and middleY>=0:
+            if width>middleX and height>middleY and middleX>=0 and middleY>=0:
                 r,g,b = img.getpixel((middleX,middleY))
                 facestyle["fill"]=str(inkex.Color((r, g, b)))
             else:
